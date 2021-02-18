@@ -14,6 +14,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.model_selection import train_test_split
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -66,12 +67,26 @@ if __name__ == "__main__":
                   (data_df.passenger_count > 0)].dropna()
 
     logger.info("Splitting %d rows of data into train, validation, test datasets.", len(data_df))
-    np.random.shuffle(data_df)
-    train, validation, test = np.split(data_df, [int(0.7 * len(data_df)), int(0.85 * len(data_df))])
+#     np.random.shuffle(data_df)
+#     train, validation, test = np.split(data_df, [int(0.7 * len(data_df)), int(0.85 * len(data_df))])
+    train, validation = train_test_split(data_df, test_size=0.20, random_state=42)
+    validation, test = train_test_split(validation, test_size=0.05, random_state=42)
+
+    # Set the index for our test dataframe
+    test.reset_index(inplace=True, drop=True)
 
     logger.info("Writing out datasets to %s.", base_dir)
-    pd.DataFrame(train).to_csv(f"{base_dir}/train/train.csv", header=False, index=False)
-    pd.DataFrame(validation).to_csv(
+    train.to_csv(f"{base_dir}/train/train.csv", header=False, index=False)
+    validation.to_csv(
         f"{base_dir}/validation/validation.csv", header=False, index=False
     )
-    pd.DataFrame(test).to_csv(f"{base_dir}/test/test.csv", header=False, index=False)
+    test.to_csv(f"{base_dir}/test/test.csv", header=False, index=False)
+    
+    # Save test and baseline with headers
+    train.to_csv('baseline.csv', index=False, header=True)
+
+#     pd.DataFrame(train).to_csv(f"{base_dir}/train/train.csv", header=False, index=False)
+#     pd.DataFrame(validation).to_csv(
+#         f"{base_dir}/validation/validation.csv", header=False, index=False
+#     )
+#     pd.DataFrame(test).to_csv(f"{base_dir}/test/test.csv", header=False, index=False)
