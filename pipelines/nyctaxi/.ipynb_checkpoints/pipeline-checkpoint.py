@@ -131,10 +131,17 @@ def get_pipeline(
 
     # training step for generating model artifacts
     model_path = f"s3://{sagemaker_session.default_bucket()}/{base_job_prefix}/NYCTaxiTrain"
+#     image_uri = sagemaker.image_uris.retrieve(
+#         framework="xgboost",
+#         region=region,
+#         version="1.2-1",
+#         py_version="py3",
+#         instance_type=training_instance_type,
+#     )
     image_uri = sagemaker.image_uris.retrieve(
         framework="xgboost",
         region=region,
-        version="latest",
+        version="1.0-1",
         py_version="py3",
         instance_type=training_instance_type,
     )
@@ -150,11 +157,12 @@ def get_pipeline(
     xgb_train.set_hyperparameters(
         objective="reg:linear",
         num_round=50,
-        max_depth=5,
+        max_depth=9,
         eta=0.2,
         gamma=4,
-        min_child_weight=6,
-        subsample=0.7,
+        min_child_weight=300,
+        subsample=0.8,
+        early_stopping_rounds=10
         silent=0,
     )
     step_train = TrainingStep(
@@ -177,15 +185,8 @@ def get_pipeline(
     )
 
     # processing step for evaluation
-    image_uri_processing = sagemaker.image_uris.retrieve(
-        framework="xgboost",
-        region=region,
-        version="1.2-1",
-        py_version="py3",
-        instance_type=training_instance_type,
-    )
     script_eval = ScriptProcessor(
-        image_uri=image_uri_processing,
+        image_uri=image_uri,
         command=["python3"],
         instance_type=processing_instance_type,
         instance_count=1,
