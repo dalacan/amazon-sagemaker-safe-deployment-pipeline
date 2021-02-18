@@ -134,7 +134,7 @@ def get_pipeline(
     image_uri = sagemaker.image_uris.retrieve(
         framework="xgboost",
         region=region,
-        version="1.2-1",
+        version="latest",
         py_version="py3",
         instance_type=training_instance_type,
     )
@@ -177,8 +177,15 @@ def get_pipeline(
     )
 
     # processing step for evaluation
+    image_uri_processing = sagemaker.image_uris.retrieve(
+        framework="xgboost",
+        region=region,
+        version="1.2-1",
+        py_version="py3",
+        instance_type=training_instance_type,
+    )
     script_eval = ScriptProcessor(
-        image_uri=image_uri,
+        image_uri=image_uri_processing,
         command=["python3"],
         instance_type=processing_instance_type,
         instance_count=1,
