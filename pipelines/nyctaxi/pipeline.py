@@ -1,4 +1,4 @@
-"""Example workflow pipeline script for abalone pipeline.
+"""Example workflow pipeline script for NYC Taxi pipeline.
 
                                                . -RegisterModel
                                               .
@@ -74,11 +74,11 @@ def get_pipeline(
     region,
     role=None,
     default_bucket=None,
-    model_package_group_name="AbalonePackageGroup",
-    pipeline_name="AbalonePipeline",
-    base_job_prefix="Abalone",
+    model_package_group_name="NYCTaxiPackageGroup",
+    pipeline_name="NYCTaxiPipeline",
+    base_job_prefix="NYCTaxi",
 ):
-    """Gets a SageMaker ML Pipeline instance working with on abalone data.
+    """Gets a SageMaker ML Pipeline instance working with on nyc taxi data.
 
     Args:
         region: AWS region to create and run the pipeline.
@@ -105,7 +105,7 @@ def get_pipeline(
     )
     input_data = ParameterString(
         name="InputDataUrl",
-        default_value=f"s3://sagemaker-servicecatalog-seedcode-{region}/dataset/abalone-dataset.csv",
+        default_value=f"s3://nyc-tlc/trip data/green_tripdata_2018-02.csv",
     )
 
     # processing step for feature engineering
@@ -113,12 +113,12 @@ def get_pipeline(
         framework_version="0.23-1",
         instance_type=processing_instance_type,
         instance_count=processing_instance_count,
-        base_job_name=f"{base_job_prefix}/sklearn-abalone-preprocess",
+        base_job_name=f"{base_job_prefix}/sklearn-nyctaxi-preprocess",
         sagemaker_session=sagemaker_session,
         role=role,
     )
     step_process = ProcessingStep(
-        name="PreprocessAbaloneData",
+        name="PreprocessNYCTaxiData",
         processor=sklearn_processor,
         outputs=[
             ProcessingOutput(output_name="train", source="/opt/ml/processing/train"),
@@ -130,11 +130,11 @@ def get_pipeline(
     )
 
     # training step for generating model artifacts
-    model_path = f"s3://{sagemaker_session.default_bucket()}/{base_job_prefix}/AbaloneTrain"
+    model_path = f"s3://{sagemaker_session.default_bucket()}/{base_job_prefix}/NYCTaxiTrain"
     image_uri = sagemaker.image_uris.retrieve(
         framework="xgboost",
         region=region,
-        version="1.0-1",
+        version="latest",
         py_version="py3",
         instance_type=training_instance_type,
     )
@@ -143,7 +143,7 @@ def get_pipeline(
         instance_type=training_instance_type,
         instance_count=1,
         output_path=model_path,
-        base_job_name=f"{base_job_prefix}/abalone-train",
+        base_job_name=f"{base_job_prefix}/nyctaxi-train",
         sagemaker_session=sagemaker_session,
         role=role,
     )
@@ -158,7 +158,7 @@ def get_pipeline(
         silent=0,
     )
     step_train = TrainingStep(
-        name="TrainAbaloneModel",
+        name="TrainNYCTaxiModel",
         estimator=xgb_train,
         inputs={
             "train": TrainingInput(
@@ -182,17 +182,17 @@ def get_pipeline(
         command=["python3"],
         instance_type=processing_instance_type,
         instance_count=1,
-        base_job_name=f"{base_job_prefix}/script-abalone-eval",
+        base_job_name=f"{base_job_prefix}/script-nyctaxi-eval",
         sagemaker_session=sagemaker_session,
         role=role,
     )
     evaluation_report = PropertyFile(
-        name="AbaloneEvaluationReport",
+        name="NYCTaxiEvaluationReport",
         output_name="evaluation",
         path="evaluation.json",
     )
     step_eval = ProcessingStep(
-        name="EvaluateAbaloneModel",
+        name="EvaluateNYCTaxiModel",
         processor=script_eval,
         inputs=[
             ProcessingInput(
@@ -223,7 +223,7 @@ def get_pipeline(
         )
     )
     step_register = RegisterModel(
-        name="RegisterAbaloneModel",
+        name="RegisterNYCTaxiModel",
         estimator=xgb_train,
         model_data=step_train.properties.ModelArtifacts.S3ModelArtifacts,
         content_types=["text/csv"],
@@ -245,7 +245,7 @@ def get_pipeline(
         right=6.0,
     )
     step_cond = ConditionStep(
-        name="CheckMSEAbaloneEvaluation",
+        name="CheckMSENYCTaxiEvaluation",
         conditions=[cond_lte],
         if_steps=[step_register],
         else_steps=[],
