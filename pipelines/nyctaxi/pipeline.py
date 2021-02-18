@@ -162,7 +162,7 @@ def get_pipeline(
         gamma=4,
         min_child_weight=300,
         subsample=0.8,
-        early_stopping_rounds=10
+        early_stopping_rounds=10,
         silent=0,
     )
     step_train = TrainingStep(
