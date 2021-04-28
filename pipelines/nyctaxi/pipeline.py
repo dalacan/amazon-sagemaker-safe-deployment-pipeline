@@ -8,6 +8,7 @@
 
 Implements a get_pipeline(**kwargs) method.
 """
+import json
 import os
 
 import boto3
@@ -16,6 +17,7 @@ import sagemaker.session
 
 from sagemaker.estimator import Estimator
 from sagemaker.inputs import TrainingInput
+from sagemaker.model_monitor.dataset_format import DatasetFormat
 from sagemaker.model_metrics import (
     MetricsSource,
     ModelMetrics,
@@ -23,6 +25,7 @@ from sagemaker.model_metrics import (
 from sagemaker.processing import (
     ProcessingInput,
     ProcessingOutput,
+    Processor,
     ScriptProcessor,
 )
 from sagemaker.sklearn.processing import SKLearnProcessor
@@ -89,13 +92,19 @@ def get_pipeline(
         an instance of a pipeline
     """
     sagemaker_session = get_session(region, default_bucket)
+    default_bucket = sagemaker_session.default_bucket()
     if role is None:
         role = sagemaker.session.get_execution_role(sagemaker_session)
 
     # parameters for pipeline execution
-    processing_instance_count = ParameterInteger(name="ProcessingInstanceCount", default_value=1)
+    processing_instance_count = ParameterInteger(
+        name="ProcessingInstanceCount", default_value=1
+    )
     processing_instance_type = ParameterString(
         name="ProcessingInstanceType", default_value="ml.m5.xlarge"
+    )
+    baseline_instance_type = ParameterString(
+        name="BaselineInstanceType", default_value="ml.m5.xlarge"
     )
     training_instance_type = ParameterString(
         name="TrainingInstanceType", default_value="ml.m5.xlarge"
@@ -106,6 +115,14 @@ def get_pipeline(
     input_data = ParameterString(
         name="InputDataUrl",
         default_value=f"s3://nyc-tlc/trip data/green_tripdata_2018-02.csv",
+    )
+    model_output = ParameterString(
+        name="ModelOutputUrl",
+        default_value=f"s3://{default_bucket}/{base_job_prefix}/model",
+    )
+    baseline_output = ParameterString(
+        name="OutputBaselineUrl",
+        default_value=f"s3://{default_bucket}/{base_job_prefix}/baseline",
     )
 
     # processing step for feature engineering
@@ -122,22 +139,64 @@ def get_pipeline(
         processor=sklearn_processor,
         outputs=[
             ProcessingOutput(output_name="train", source="/opt/ml/processing/train"),
-            ProcessingOutput(output_name="validation", source="/opt/ml/processing/validation"),
+            ProcessingOutput(
+                output_name="validation", source="/opt/ml/processing/validation"
+            ),
             ProcessingOutput(output_name="test", source="/opt/ml/processing/test"),
+            ProcessingOutput(
+                output_name="baseline", source="/opt/ml/processing/baseline"
+            ),
         ],
         code=os.path.join(BASE_DIR, "preprocess.py"),
         job_arguments=["--input-data", input_data],
     )
 
+    # baseline job step
+    # Get the default model monitor container
+    model_monitor_container_uri = sagemaker.image_uris.retrieve(
+        framework="model-monitor", region=region, version="latest",
+    )
+
+    # Create the baseline job using
+    dataset_format = DatasetFormat.csv()
+    env = {
+        "dataset_format": json.dumps(dataset_format),
+        "dataset_source": "/opt/ml/processing/input/baseline_dataset_input",
+        "output_path": "/opt/ml/processing/output",
+        "publish_cloudwatch_metrics": "Disabled",
+    }
+
+    monitor_analyzer = Processor(
+        image_uri=model_monitor_container_uri,
+        role=role,
+        instance_count=1,
+        instance_type=baseline_instance_type,
+        max_runtime_in_seconds=1800,
+        env=env,
+    )
+
+    step_baseline = ProcessingStep(
+        name="BaselineJob",
+        processor=monitor_analyzer,
+        inputs=[
+            ProcessingInput(
+                source=step_process.properties.ProcessingOutputConfig.Outputs[
+                    "baseline"
+                ].S3Output.S3Uri,
+                destination="/opt/ml/processing/input/baseline_dataset_input",
+                input_name="baseline_dataset_input",
+            ),
+        ],
+        outputs=[
+            ProcessingOutput(
+                source="/opt/ml/processing/output",
+                destination=baseline_output,
+                output_name="monitoring_output",
+            ),
+        ],
+    )
+
     # training step for generating model artifacts
-    model_path = f"s3://{sagemaker_session.default_bucket()}/{base_job_prefix}/NYCTaxiTrain"
-#     image_uri = sagemaker.image_uris.retrieve(
-#         framework="xgboost",
-#         region=region,
-#         version="1.2-1",
-#         py_version="py3",
-#         instance_type=training_instance_type,
-#     )
     image_uri = sagemaker.image_uris.retrieve(
         framework="xgboost",
         region=region,
@@ -149,10 +208,11 @@ def get_pipeline(
         image_uri=image_uri,
         instance_type=training_instance_type,
         instance_count=1,
-        output_path=model_path,
+        output_path=model_output,
         base_job_name=f"{base_job_prefix}/nyctaxi-train",
         sagemaker_session=sagemaker_session,
         role=role,
+        disable_profiler=True,
     )
     xgb_train.set_hyperparameters(
         objective="reg:linear",
@@ -215,7 +275,9 @@ def get_pipeline(
             ),
         ],
         outputs=[
-            ProcessingOutput(output_name="evaluation", source="/opt/ml/processing/evaluation"),
+            ProcessingOutput(
+                output_name="evaluation", source="/opt/ml/processing/evaluation"
+            ),
         ],
         code=os.path.join(BASE_DIR, "evaluate.py"),
         property_files=[evaluation_report],
@@ -225,9 +287,11 @@ def get_pipeline(
     model_metrics = ModelMetrics(
         model_statistics=MetricsSource(
             s3_uri="{}/evaluation.json".format(
-                step_eval.arguments["ProcessingOutputConfig"]["Outputs"][0]["S3Output"]["S3Uri"]
+                step_eval.arguments["ProcessingOutputConfig"]["Outputs"][0]["S3Output"][
+                    "S3Uri"
+                ]
             ),
-            content_type="application/json"
+            content_type="application/json",
         )
     )
     step_register = RegisterModel(
@@ -248,7 +312,7 @@ def get_pipeline(
         left=JsonGet(
             step=step_eval,
             property_file=evaluation_report,
-            json_path="regression_metrics.mse.value"
+            json_path="regression_metrics.mse.value",
         ),
         right=6.0,
     )
@@ -265,11 +329,14 @@ def get_pipeline(
         parameters=[
             processing_instance_type,
             processing_instance_count,
+            baseline_instance_type,
             training_instance_type,
             model_approval_status,
             input_data,
+            model_output,
+            baseline_output,
         ],
-        steps=[step_process, step_train, step_eval, step_cond],
+        steps=[step_process, step_baseline, step_train, step_eval, step_cond],
         sagemaker_session=sagemaker_session,
     )
     return pipeline

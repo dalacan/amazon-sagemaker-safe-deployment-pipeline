@@ -21,7 +21,7 @@ logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
 
 
-parse_dates= ['lpep_dropoff_datetime', 'lpep_pickup_datetime']
+parse_dates = ["lpep_dropoff_datetime", "lpep_pickup_datetime"]
 
 if __name__ == "__main__":
     logger.debug("Starting preprocessing.")
@@ -41,34 +41,34 @@ if __name__ == "__main__":
     s3.Bucket(bucket).download_file(key, fn)
 
     logger.debug("Reading downloaded data.")
-    df = pd.read_csv(
-        fn,
-        parse_dates=parse_dates
-    )
-    
+    df = pd.read_csv(fn, parse_dates=parse_dates)
+
+    # Delete the file
     os.unlink(fn)
 
-    #
-    # Data manipulation
-    #
-    # Instead of the raw date and time features for pick-up and drop-off, 
-    # let's use these features to calculate the total time of the trip in minutes, which will be easier to work with for our model.
+    # Instead of the raw date and time features for pick-up and drop-off,
+    df["duration_minutes"] = (
+        df["lpep_dropoff_datetime"] - df["lpep_pickup_datetime"]
+    ).dt.seconds / 60
 
-    df['duration_minutes'] = (df['lpep_dropoff_datetime'] - df['lpep_pickup_datetime']).dt.seconds/60
-    
     # Remove unnecessary columns
-    cols = ['total_amount', 'duration_minutes', 'passenger_count', 'trip_distance']
+    cols = ["total_amount", "duration_minutes", "passenger_count", "trip_distance"]
     data_df = df[cols]
-    
-    # Remove outliers
-    data_df = data_df[(data_df.total_amount > 0) & (data_df.total_amount < 200) & 
-                  (data_df.duration_minutes > 0) & (data_df.duration_minutes < 120) & 
-                  (data_df.trip_distance > 0) & (data_df.trip_distance < 121) & 
-                  (data_df.passenger_count > 0)].dropna()
 
-    logger.info("Splitting %d rows of data into train, validation, test datasets.", len(data_df))
-#     np.random.shuffle(data_df)
-#     train, validation, test = np.split(data_df, [int(0.7 * len(data_df)), int(0.85 * len(data_df))])
+    # Remove outliers
+    data_df = data_df[
+        (data_df.total_amount > 0)
+        & (data_df.total_amount < 200)
+        & (data_df.duration_minutes > 0)
+        & (data_df.duration_minutes < 120)
+        & (data_df.trip_distance > 0)
+        & (data_df.trip_distance < 121)
+        & (data_df.passenger_count > 0)
+    ].dropna()
+
+    logger.info(
+        "Splitting %d rows of data into train, validation, test datasets.", len(data_df)
+    )
     train, validation = train_test_split(data_df, test_size=0.20, random_state=42)
     validation, test = train_test_split(validation, test_size=0.05, random_state=42)
 
@@ -81,12 +81,6 @@ if __name__ == "__main__":
         f"{base_dir}/validation/validation.csv", header=False, index=False
     )
     test.to_csv(f"{base_dir}/test/test.csv", header=False, index=False)
-    
-    # Save test and baseline with headers
-    train.to_csv('baseline.csv', index=False, header=True)
 
-#     pd.DataFrame(train).to_csv(f"{base_dir}/train/train.csv", header=False, index=False)
-#     pd.DataFrame(validation).to_csv(
-#         f"{base_dir}/validation/validation.csv", header=False, index=False
-#     )
-#     pd.DataFrame(test).to_csv(f"{base_dir}/test/test.csv", header=False, index=False)
+    # Save test and baseline with headers
+    train.to_csv(f"{base_dir}/baseline/baseline.csv", index=False, header=True)
